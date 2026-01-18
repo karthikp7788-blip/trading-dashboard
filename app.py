@@ -711,7 +711,7 @@ def main():
                     # Train model
                     X_train = train_data[fe.feature_columns]
                     y_train = train_data['target_direction_1d']
-                    model.train(X_train, y_train, verbose=False)
+                    model.train(X_train, y_train)
                     model.calibrate_probabilities(X_train, y_train)
                     
                     # Get predictions
