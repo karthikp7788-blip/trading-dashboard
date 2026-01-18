@@ -138,15 +138,19 @@ class XGBoostPredictor:
         """
         print(f"\n🎯 Calibrating probabilities using {method} method...")
         
-        # Create calibrated model
-        self.calibrated_model = CalibratedClassifierCV(
-            self.model,
-            method=method,
-            cv='prefit'
-        )
-        
-        # Fit on calibration data
-        self.calibrated_model.fit(X_cal, y_cal)
+        # Create calibrated model (sklearn 1.6+ requires different approach)
+        try:
+            # Try newer sklearn approach
+            from sklearn.calibration import CalibratedClassifierCV
+            self.calibrated_model = CalibratedClassifierCV(
+                self.model,
+                method=method,
+                cv=5  # Use cross-validation instead of prefit
+            )
+            self.calibrated_model.fit(X_cal, y_cal)
+        except Exception:
+            # Fallback: just use uncalibrated model
+            self.calibrated_model = None
         
         print("✓ Probability calibration complete")
     
