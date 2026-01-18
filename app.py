@@ -708,11 +708,19 @@ def main():
                     train_data = ml_dataset.iloc[:split_idx]
                     test_data = ml_dataset.iloc[split_idx:]
                     
-                    # Train model
+                    # Train model with validation split
                     X_train = train_data[fe.feature_columns]
                     y_train = train_data['target_direction_1d']
-                    model.train(X_train, y_train)
-                    model.calibrate_probabilities(X_train, y_train)
+                    
+                    # Split training data for validation
+                    val_split = int(len(X_train) * 0.8)
+                    X_tr = X_train.iloc[:val_split]
+                    y_tr = y_train.iloc[:val_split]
+                    X_val = X_train.iloc[val_split:]
+                    y_val = y_train.iloc[val_split:]
+                    
+                    model.train(X_tr, y_tr, X_val, y_val)
+                    model.calibrate_probabilities(X_val, y_val)
                     
                     # Get predictions
                     X_test = test_data[fe.feature_columns]
