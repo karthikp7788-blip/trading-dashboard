@@ -395,7 +395,7 @@ def main():
     st.markdown(f'<div class="main-header">📈 {ticker} Trading Analysis</div>', unsafe_allow_html=True)
     
     # Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Technical Analysis", "🎯 Options Intelligence", "📋 Data"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Overview", "📈 Technical Analysis", "🎯 Options Intelligence", "📋 Data", "🧪 Backtest"])
     
     with tab1:
         # Key metrics
@@ -644,6 +644,187 @@ def main():
                 if not isinstance(v, list)
             ])
             st.dataframe(metrics_df, use_container_width=True, hide_index=True)
+    
+    with tab5:
+        st.subheader("🧪 Strategy Backtest")
+        
+        st.markdown("""
+        Test the prediction model on historical data to see how it would have performed.
+        """)
+        
+        # Backtest parameters
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            confidence_threshold = st.slider(
+                "Confidence Threshold",
+                min_value=0.5,
+                max_value=0.8,
+                value=0.6,
+                step=0.05,
+                help="Only trade when model confidence exceeds this threshold"
+            )
+        
+        with col2:
+            train_days = st.selectbox(
+                "Training Window",
+                [126, 252, 504],
+                index=1,
+                format_func=lambda x: f"{x} days (~{x//252} year)" if x >= 252 else f"{x} days (~6 months)"
+            )
+        
+        with col3:
+            initial_capital = st.number_input(
+                "Initial Capital ($)",
+                min_value=10000,
+                max_value=1000000,
+                value=100000,
+                step=10000
+            )
+        
+        if st.button("🚀 Run Backtest", type="primary"):
+            
+            with st.spinner("Running backtest... This may take a minute..."):
+                try:
+                    from feature_engineering import FeatureEngineering
+                    from xgboost_model import XGBoostPredictor
+                    from backtesting import Backtester
+                    
+                    # Create ML dataset
+                    fe = FeatureEngineering()
+                    ml_dataset = fe.create_ml_dataset(data, target_horizon=1)
+                    
+                    # Initialize
+                    backtester = Backtester(
+                        initial_capital=initial_capital,
+                        commission=1.0,
+                        slippage=0.001
+                    )
+                    
+                    model = XGBoostPredictor()
+                    
+                    # Simple train/test split for speed
+                    split_idx = int(len(ml_dataset) * 0.7)
+                    train_data = ml_dataset.iloc[:split_idx]
+                    test_data = ml_dataset.iloc[split_idx:]
+                    
+                    # Train model
+                    X_train = train_data[fe.feature_columns]
+                    y_train = train_data['target_direction_1d']
+                    model.train(X_train, y_train, verbose=False)
+                    model.calibrate_probabilities(X_train, y_train)
+                    
+                    # Get predictions
+                    X_test = test_data[fe.feature_columns]
+                    predictions = model.predict_with_confidence(X_test, confidence_threshold=confidence_threshold)
+                    
+                    # Simulate strategy
+                    price_data_aligned = data.loc[test_data.index]
+                    trades = backtester.simulate_strategy(
+                        predictions=predictions,
+                        price_data=price_data_aligned,
+                        confidence_threshold=confidence_threshold,
+                        position_size=1.0
+                    )
+                    
+                    # Calculate metrics
+                    bt_metrics = backtester.calculate_metrics()
+                    
+                    # Display results
+                    st.success("✓ Backtest Complete!")
+                    
+                    st.markdown("---")
+                    st.markdown("### 📊 Performance Metrics")
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        win_rate = bt_metrics.get('win_rate', 0)
+                        st.metric("Win Rate", f"{win_rate:.1%}", 
+                                 delta=f"{(win_rate-0.5)*100:+.1f}% vs random")
+                    
+                    with col2:
+                        total_return = bt_metrics.get('total_return', 0)
+                        st.metric("Total Return", f"{total_return:.1%}")
+                    
+                    with col3:
+                        profit_factor = bt_metrics.get('profit_factor', 0)
+                        st.metric("Profit Factor", f"{profit_factor:.2f}")
+                    
+                    with col4:
+                        max_dd = bt_metrics.get('max_drawdown', 0)
+                        st.metric("Max Drawdown", f"{max_dd:.1%}")
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Total Trades", bt_metrics.get('total_trades', 0))
+                    
+                    with col2:
+                        st.metric("Winners", bt_metrics.get('winning_trades', 0))
+                    
+                    with col3:
+                        sharpe = bt_metrics.get('sharpe_ratio', 0)
+                        st.metric("Sharpe Ratio", f"{sharpe:.2f}")
+                    
+                    with col4:
+                        expectancy = bt_metrics.get('expectancy', 0)
+                        st.metric("Expectancy", f"${expectancy:.0f}")
+                    
+                    # Interpretation
+                    st.markdown("---")
+                    st.markdown("### 💡 Interpretation")
+                    
+                    if win_rate >= 0.55 and total_return > 0:
+                        st.success("✅ **EDGE DETECTED** - Strategy shows promise with win rate above 55% and positive returns.")
+                    elif win_rate >= 0.52:
+                        st.warning("⚠️ **MARGINAL EDGE** - Results slightly above random. Consider optimization.")
+                    else:
+                        st.error("❌ **NO EDGE** - Strategy doesn't beat random. Needs improvement.")
+                    
+                    # Equity curve
+                    if len(backtester.equity_curve) > 0:
+                        st.markdown("---")
+                        st.markdown("### 📈 Equity Curve")
+                        
+                        equity_df = backtester.equity_curve.reset_index()
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(
+                            x=equity_df['date'],
+                            y=equity_df['total_equity'],
+                            mode='lines',
+                            name='Equity',
+                            line=dict(color='blue', width=2)
+                        ))
+                        fig.add_hline(y=initial_capital, line_dash="dash", line_color="gray",
+                                     annotation_text="Starting Capital")
+                        fig.update_layout(
+                            title="Portfolio Value Over Time",
+                            xaxis_title="Date",
+                            yaxis_title="Equity ($)",
+                            height=400
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Trade history
+                    if len(trades) > 0:
+                        st.markdown("---")
+                        st.markdown("### 📋 Recent Trades")
+                        
+                        trades_display = trades[['entry_date', 'exit_date', 'direction', 
+                                                 'entry_price', 'exit_price', 'pnl', 'correct']].tail(20).copy()
+                        trades_display['entry_price'] = trades_display['entry_price'].apply(lambda x: f"${x:.2f}")
+                        trades_display['exit_price'] = trades_display['exit_price'].apply(lambda x: f"${x:.2f}")
+                        trades_display['pnl'] = trades_display['pnl'].apply(lambda x: f"${x:+,.0f}")
+                        trades_display['correct'] = trades_display['correct'].apply(lambda x: "✓" if x else "✗")
+                        trades_display.columns = ['Entry Date', 'Exit Date', 'Direction', 
+                                                 'Entry Price', 'Exit Price', 'P&L', 'Correct']
+                        
+                        st.dataframe(trades_display, use_container_width=True, hide_index=True)
+                
+                except Exception as e:
+                    st.error(f"Error running backtest: {str(e)}")
+                    st.info("Make sure all required modules are uploaded to GitHub.")
 
 
 if __name__ == "__main__":
