@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 # Import our modules
 from technical_indicators import TechnicalIndicators
 from options_analytics import OptionsAnalytics
+from real_data_provider import RealDataProvider
 
 # Page configuration
 st.set_page_config(
@@ -54,131 +55,31 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-def generate_synthetic_price_data(ticker='SPY', days=1260):
-    """Generate realistic synthetic price data"""
-    np.random.seed(42)
-    
-    start_date = datetime.now() - timedelta(days=days)
-    dates = pd.date_range(start=start_date, periods=days, freq='D')
-    dates = dates[dates.weekday < 5]
-    
-    initial_price = 400.0
-    drift = 0.0003
-    volatility = 0.015
-    
-    returns = np.random.normal(drift, volatility, len(dates))
-    price_path = initial_price * np.exp(np.cumsum(returns))
-    
-    data = []
-    for i, (date, close) in enumerate(zip(dates, price_path)):
-        daily_range = close * np.random.uniform(0.005, 0.020)
-        high = close + np.random.uniform(0, daily_range)
-        low = close - np.random.uniform(0, daily_range)
-        open_price = np.random.uniform(low, high)
-        volume = int(np.random.uniform(50_000_000, 150_000_000))
-        
-        data.append({
-            'Open': open_price,
-            'High': high,
-            'Low': low,
-            'Close': close,
-            'Volume': volume
-        })
-    
-    df = pd.DataFrame(data, index=dates)
-    df.index.name = 'Date'
-    df['Ticker'] = ticker
-    
-    return df
-
-
-def generate_synthetic_options(spot_price, expiration_days=30):
-    """Generate realistic synthetic options chain"""
-    
-    strikes = np.arange(
-        int(spot_price * 0.90),
-        int(spot_price * 1.10),
-        1
-    )
-    
-    calls_data = []
-    puts_data = []
-    
-    for strike in strikes:
-        moneyness = strike / spot_price
-        distance_from_atm = abs(moneyness - 1.0)
-        
-        base_volume = 10000 * np.exp(-20 * distance_from_atm)
-        call_volume = int(base_volume * np.random.uniform(0.5, 1.5))
-        put_volume = int(base_volume * np.random.uniform(0.5, 1.5))
-        
-        call_oi = call_volume * np.random.randint(3, 10)
-        put_oi = put_volume * np.random.randint(3, 10)
-        
-        base_iv = 0.20
-        if moneyness < 1.0:
-            iv_adjustment = (1.0 - moneyness) * 0.5
-        else:
-            iv_adjustment = (moneyness - 1.0) * 0.2
-        
-        call_iv = base_iv + iv_adjustment * 0.3
-        put_iv = base_iv + iv_adjustment
-        
-        time_value_factor = np.sqrt(expiration_days / 365.0)
-        
-        call_intrinsic = max(spot_price - strike, 0)
-        call_time_value = spot_price * call_iv * time_value_factor * 0.4
-        call_price = call_intrinsic + call_time_value
-        
-        put_intrinsic = max(strike - spot_price, 0)
-        put_time_value = spot_price * put_iv * time_value_factor * 0.4
-        put_price = put_intrinsic + put_time_value
-        
-        call_spread = call_price * 0.02
-        put_spread = put_price * 0.02
-        
-        calls_data.append({
-            'strike': strike,
-            'lastPrice': call_price,
-            'bid': max(0, call_price - call_spread/2),
-            'ask': call_price + call_spread/2,
-            'volume': call_volume,
-            'openInterest': call_oi,
-            'impliedVolatility': call_iv
-        })
-        
-        puts_data.append({
-            'strike': strike,
-            'lastPrice': put_price,
-            'bid': max(0, put_price - put_spread/2),
-            'ask': put_price + put_spread/2,
-            'volume': put_volume,
-            'openInterest': put_oi,
-            'impliedVolatility': put_iv
-        })
-    
-    exp_date = (datetime.now() + timedelta(days=expiration_days)).strftime('%Y-%m-%d')
-    
-    return {
-        'calls': pd.DataFrame(calls_data),
-        'puts': pd.DataFrame(puts_data),
-        'nearest_expiration': exp_date,
-        'expirations': [exp_date]
-    }
+@st.cache_resource
+def get_data_provider():
+    """Initialize real data provider once"""
+    return RealDataProvider(massive_api_key="xxu7bdpXlzs9EwWXFk_x0BDkM25FSBFg")
 
 
 @st.cache_data
 def load_data(ticker):
     """Load and process data"""
-    # Generate synthetic data
-    price_data = generate_synthetic_price_data(ticker, days=1260)
+    provider = get_data_provider()
+    
+    # Get real market data (5 years)
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=1260)).strftime('%Y-%m-%d')
+    
+    price_data = provider.get_stock_data(ticker, start_date, end_date)
     
     # Calculate indicators
     data_with_indicators = TechnicalIndicators.calculate_all_indicators(price_data)
     
-    # Generate options
+    # Get real options chain
+    options_data = provider.get_options_chain(ticker)
+    
+    # Get current price
     current_price = data_with_indicators['Close'].iloc[-1]
-    options_data = generate_synthetic_options(current_price, expiration_days=30)
     
     # Calculate options metrics
     options_metrics = OptionsAnalytics.calculate_all_metrics(options_data, current_price)
@@ -481,7 +382,7 @@ def main():
     days = timeframe_map[timeframe]
     
     st.sidebar.markdown("---")
-    st.sidebar.info("💡 **Note**: Using synthetic data for demonstration. Real market data requires network access.")
+    st.sidebar.success("✓ **Live Data**: Connected to real market data")
     
     # Load data
     with st.spinner('Loading data...'):
