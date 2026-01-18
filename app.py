@@ -704,15 +704,24 @@ def main():
                     fe = FeatureEngineering()
                     ml_dataset = fe.create_ml_dataset(data, target_horizon=1)
                     
-                    # Simple train/test split
-                    split_idx = int(len(ml_dataset) * 0.7)
-                    train_data = ml_dataset.iloc[:split_idx]
-                    test_data = ml_dataset.iloc[split_idx:]
+                    # Use train_days to determine split
+                    # Train on train_days, test on remaining
+                    if train_days >= len(ml_dataset) - 10:
+                        st.error(f"Not enough data. Need more than {train_days} days.")
+                        st.stop()
+                    
+                    train_data = ml_dataset.iloc[:train_days]
+                    test_data = ml_dataset.iloc[train_days:]
                     
                     # Train model
                     model = XGBoostPredictor()
                     X_train = train_data[fe.feature_columns]
                     y_train = train_data['target_direction_1d']
+                    
+                    # Need minimum data for validation
+                    if len(X_train) < 20:
+                        st.error("Training window too small. Need at least 20 days.")
+                        st.stop()
                     
                     val_split = int(len(X_train) * 0.8)
                     X_tr = X_train.iloc[:val_split]
