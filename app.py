@@ -500,6 +500,7 @@ def main():
             st.metric("Lower Band", f"${latest['BB_Lower']:.2f}")
         
         bb_position = latest['BB_Position']
+        bb_position = max(0.0, min(1.0, bb_position))  # Clamp between 0 and 1
         st.progress(bb_position)
         st.caption(f"Price position within bands: {bb_position*100:.1f}%")
     
@@ -668,9 +669,19 @@ def main():
         with col2:
             train_days = st.selectbox(
                 "Training Window",
-                [126, 252, 504],
-                index=1,
-                format_func=lambda x: f"{x} days (~{x//252} year)" if x >= 252 else f"{x} days (~6 months)"
+                [1, 5, 10, 21, 42, 63, 126, 252, 504],
+                index=5,
+                format_func=lambda x: {
+                    1: "1 day",
+                    5: "5 days (~1 week)",
+                    10: "10 days (~2 weeks)",
+                    21: "21 days (~1 month)",
+                    42: "42 days (~2 months)",
+                    63: "63 days (~3 months)",
+                    126: "126 days (~6 months)",
+                    252: "252 days (~1 year)",
+                    504: "504 days (~2 years)"
+                }.get(x, f"{x} days")
             )
         
         with col3:
