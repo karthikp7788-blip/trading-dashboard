@@ -395,7 +395,7 @@ def main():
     st.markdown(f'<div class="main-header">📈 {ticker} Trading Analysis</div>', unsafe_allow_html=True)
     
     # Tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Overview", "📈 Technical Analysis", "🎯 Options Intelligence", "📋 Data", "🧪 Backtest"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Overview", "📈 Technical Analysis", "🎯 Options Intelligence", "📋 Data", "🧪 Backtest", "🚀 Trade Signal"])
     
     with tab1:
         # Key metrics
@@ -865,6 +865,193 @@ def main():
                 except Exception as e:
                     st.error(f"Error running backtest: {str(e)}")
                     st.info("Make sure all required modules are uploaded to GitHub.")
+    
+    with tab6:
+        st.subheader("🚀 Today's Trade Signal")
+        
+        st.markdown("""
+        Generate a complete trade plan with entry, stop loss, take profit, and position sizing.
+        """)
+        
+        # Get current data
+        current_price = data['Close'].iloc[-1]
+        atr = data['ATR'].iloc[-1] if 'ATR' in data.columns else current_price * 0.02
+        
+        # Trade parameters
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            trade_capital = st.number_input(
+                "Trading Capital ($)",
+                min_value=1000,
+                max_value=10000000,
+                value=100000,
+                step=10000
+            )
+        
+        with col2:
+            risk_per_trade = st.slider(
+                "Risk Per Trade (%)",
+                min_value=0.5,
+                max_value=5.0,
+                value=2.0,
+                step=0.5
+            ) / 100
+        
+        with col3:
+            risk_reward = st.selectbox(
+                "Risk:Reward Ratio",
+                [1.5, 2.0, 2.5, 3.0],
+                index=1,
+                format_func=lambda x: f"1:{x}"
+            )
+        
+        if st.button("🎯 Generate Trade Signal", type="primary"):
+            
+            with st.spinner("Analyzing..."):
+                try:
+                    from feature_engineering import FeatureEngineering
+                    from xgboost_model import XGBoostPredictor
+                    
+                    # Create ML dataset
+                    fe = FeatureEngineering()
+                    ml_dataset = fe.create_ml_dataset(data, target_horizon=1)
+                    
+                    # Train on all but last day
+                    train_data = ml_dataset.iloc[:-1]
+                    
+                    if len(train_data) < 50:
+                        st.error("Not enough data to train model")
+                        st.stop()
+                    
+                    # Train model
+                    model = XGBoostPredictor()
+                    X_train = train_data[fe.feature_columns]
+                    y_train = train_data['target_direction_1d']
+                    
+                    val_split = int(len(X_train) * 0.8)
+                    model.train(X_train.iloc[:val_split], y_train.iloc[:val_split],
+                               X_train.iloc[val_split:], y_train.iloc[val_split:])
+                    
+                    # Predict for tomorrow
+                    latest_features = ml_dataset[fe.feature_columns].iloc[[-1]]
+                    pred_proba = model.model.predict_proba(latest_features)[0]
+                    prediction = 1 if pred_proba[1] > 0.5 else 0
+                    confidence = max(pred_proba)
+                    
+                    # Calculate trade parameters
+                    direction = "LONG" if prediction == 1 else "SHORT"
+                    
+                    # Stop loss (2x ATR)
+                    stop_distance = 2.0 * atr
+                    if prediction == 1:
+                        stop_loss = current_price - stop_distance
+                        take_profit = current_price + (stop_distance * risk_reward)
+                    else:
+                        stop_loss = current_price + stop_distance
+                        take_profit = current_price - (stop_distance * risk_reward)
+                    
+                    # Position sizing
+                    risk_per_share = abs(current_price - stop_loss)
+                    risk_amount = trade_capital * risk_per_trade
+                    
+                    # Adjust by confidence
+                    conf_multiplier = (confidence - 0.5) * 4
+                    conf_multiplier = max(0.25, min(1.5, conf_multiplier))
+                    adjusted_risk = risk_amount * conf_multiplier
+                    
+                    shares = int(adjusted_risk / risk_per_share) if risk_per_share > 0 else 0
+                    position_value = shares * current_price
+                    position_risk = shares * risk_per_share
+                    
+                    # Display signal
+                    st.markdown("---")
+                    
+                    # Signal header
+                    if confidence >= 0.55:
+                        if prediction == 1:
+                            st.success(f"### 📈 SIGNAL: **BUY {ticker}**")
+                        else:
+                            st.error(f"### 📉 SIGNAL: **SELL {ticker}**")
+                    else:
+                        st.warning(f"### ⚠️ SIGNAL: **NO TRADE** (Low Confidence)")
+                    
+                    # Metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Direction", direction)
+                    with col2:
+                        delta_color = "normal" if confidence >= 0.55 else "off"
+                        st.metric("Confidence", f"{confidence:.1%}", 
+                                 delta=f"{(confidence-0.5)*100:+.1f}% vs random",
+                                 delta_color=delta_color)
+                    with col3:
+                        st.metric("Probability Up", f"{pred_proba[1]:.1%}")
+                    with col4:
+                        st.metric("Probability Down", f"{pred_proba[0]:.1%}")
+                    
+                    st.markdown("---")
+                    st.markdown("### 💰 Trade Plan")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Entry Price", f"${current_price:.2f}")
+                        st.metric("Shares", f"{shares:,}")
+                    
+                    with col2:
+                        sl_pct = abs(stop_loss - current_price) / current_price * 100
+                        st.metric("Stop Loss", f"${stop_loss:.2f}", delta=f"-{sl_pct:.1f}%", delta_color="inverse")
+                        st.metric("Position Value", f"${position_value:,.0f}")
+                    
+                    with col3:
+                        tp_pct = abs(take_profit - current_price) / current_price * 100
+                        st.metric("Take Profit", f"${take_profit:.2f}", delta=f"+{tp_pct:.1f}%")
+                        st.metric("Position Risk", f"${position_risk:,.0f}", delta=f"{position_risk/trade_capital*100:.1f}% of capital")
+                    
+                    # Trade management rules
+                    st.markdown("---")
+                    st.markdown("### 📋 Trade Management Rules")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**Entry Rules:**")
+                        st.markdown("""
+                        - Enter at market open or use limit order
+                        - Wait 15 min after open to avoid volatility
+                        - Don't enter if price gaps >1% from signal
+                        """)
+                        
+                        st.markdown("**Position Sizing:**")
+                        st.markdown(f"""
+                        - Risk: {risk_per_trade*100:.1f}% of capital (${risk_amount:,.0f})
+                        - Confidence adjustment: {conf_multiplier:.2f}x
+                        - Adjusted risk: ${adjusted_risk:,.0f}
+                        """)
+                    
+                    with col2:
+                        st.markdown("**Exit Rules:**")
+                        st.markdown(f"""
+                        - Stop Loss: ${stop_loss:.2f} (exit immediately if hit)
+                        - Take Profit: ${take_profit:.2f} (1:{risk_reward} R:R)
+                        - Move stop to breakeven after +{sl_pct:.1f}% gain
+                        """)
+                        
+                        st.markdown("**Risk Management:**")
+                        st.markdown(f"""
+                        - Max loss on trade: ${position_risk:,.0f}
+                        - Max gain on trade: ${position_risk * risk_reward:,.0f}
+                        - Risk:Reward ratio: 1:{risk_reward}
+                        """)
+                    
+                    # Disclaimer
+                    st.markdown("---")
+                    st.warning("⚠️ **Disclaimer:** This is not financial advice. Always do your own research and consider your risk tolerance before trading.")
+                
+                except Exception as e:
+                    st.error(f"Error generating signal: {str(e)}")
 
 
 if __name__ == "__main__":
